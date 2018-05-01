@@ -1,6 +1,19 @@
 #!/bin/bash
-# REDEN Masternode Setup Script V1.2 for Ubuntu 16.04 LTS
+# REDEN Masternode Setup Script V1.3 for Ubuntu 16.04 LTS
 # (c) 2018 by Allroad [FasterPool.com] for Reden 
+#
+# Script will attempt to autodetect primary public IP address
+# and generate masternode private key unless specified in command line
+#
+# Usage:
+# bash reden-setup.sh [Masternode_Private_Key]
+#
+# Example 1: Existing genkey created earlier is supplied
+# bash reden-setup.sh 27dSmwq9CabKjo2L3UD1HvgBP3ygbn8HdNmFiGFoVbN1STcsypy
+#
+# Example 2: Script will generate a new genkey automatically
+# bash reden-setup.sh
+#
 
 #Color codes
 RED='\033[0;91m'
@@ -14,26 +27,50 @@ PORT=13058
 #Clear keyboard input buffer
 function clear_stdin { while read -r -t 0; do read -r; done; }
 
-#Delay script execution
+#Delay script execution for N seconds
 function delay { echo -e "${GREEN}Sleep for $1 seconds...${NC}"; sleep "$1"; }
+
+#Stop daemon if it's already running
+function stop_daemon {
+    if pgrep -x 'redend' > /dev/null; then
+        echo -e "${YELLOW}Attempting to stop redend${NC}"
+        reden-cli stop
+        delay 30
+        if pgrep -x 'redend' > /dev/null; then
+            echo -e "${RED}redend daemon is still running!${NC} \a"
+            echo -e "${YELLOW}Attempting to kill...${NC}"
+            pkill redend
+            delay 30
+            if pgrep -x 'redend' > /dev/null; then
+                echo -e "${RED}Can't stop redend! Reboot and try again...${NC} \a"
+                exit 2
+            fi
+        fi
+    fi
+}
+
+#Process command line parameters
+genkey=$1
 
 clear
 echo -e "${YELLOW}REDEN Masternode Setup Script V1.2 for Ubuntu 16.04 LTS${NC}"
 echo -e "${GREEN}Updating system and installing required packages...${NC}"
-sudo apt-get update -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
 
-# Install dnsutils if necessary
+# Determine primary public IP address
 dpkg -s dnsutils 2>/dev/null >/dev/null || sudo apt-get -y install dnsutils
-
-publicip=''
 publicip=$(dig +short myip.opendns.com @resolver1.opendns.com)
 
-if [ -n $publicip ]; then
+if [ -n "$publicip" ]; then
     echo -e "${YELLOW}IP Address detected:" $publicip ${NC}
 else
-    echo -e "${RED}ERROR:${NC} Public IP Address was not detected! \a"
+    echo -e "${RED}ERROR:${YELLOW} Public IP Address was not detected!${NC} \a"
     clear_stdin
     read -e -p "Enter VPS Public IP Address: " publicip
+    if [ -z "$publicip" ]; then
+        echo -e "${RED}ERROR:${YELLOW} Public IP Address must be provided. Try again...${NC} \a"
+        exit 1
+    fi
 fi
 
 # update packages and upgrade Ubuntu
@@ -71,7 +108,7 @@ rpcpassword=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 
 #Create 2GB swap file
 if grep -q "SwapTotal" /proc/meminfo; then
-    echo -e "${GREEN}Swap is already configured${NC}"
+    echo -e "${GREEN}Skipping disk swap configuration...${NC} \n"
 else
     echo -e "${YELLOW}Creating 2GB disk swap file. \nThis may take a few minutes!${NC} \a"
     touch /var/swap.img
@@ -81,7 +118,7 @@ else
     swapon /var/swap.img 2> /dev/null
     if [ $? -eq 0 ]; then
         echo '/var/swap.img none swap sw 0 0' >> /etc/fstab
-        echo -e "${GREEN}Swap was created successfully!${NC}"
+        echo -e "${GREEN}Swap was created successfully!${NC} \n"
     else
         echo -e "${YELLOW}Operation not permitted! Optional swap was not created.${NC} \a"
         rm /var/swap.img
@@ -95,50 +132,52 @@ cd ~
 #sudo tar -xzvf reden_ubuntu16_1.0.0_linux.gz --strip-components 1 --directory /usr/bin
 #sudo rm reden_ubuntu16_1.0.0_linux.gz
 
-#Stop daemon if it's already running
-if pgrep -x 'redend' > /dev/null; then
-    reden-cli stop
-    delay 30
-    if pgrep -x 'redend' > /dev/null; then
-        echo -e "${RED}redend daemon failed to stop!${NC} \a"
-        echo -e "${YELLOW}Attempting to kill redend${NC}"
-        pkill redend
-        delay 30
-    fi
-fi
+stop_daemon
 
-# Copy binaries to /usr/bin
+# Deploy binaries to /usr/bin
 sudo cp RedenMasternodeSetup/Reden-v1.0-Ubuntu16.04/reden* /usr/bin/
 sudo chmod 755 -R ~/RedenMasternodeSetup
 sudo chmod 755 /usr/bin/reden*
 
-# Copy masternode monitoring script
+# Deploy masternode monitoring script
 cp ~/RedenMasternodeSetup/nodemon.sh /usr/local/bin
 sudo chmod 711 /usr/local/bin/nodemon.sh
 
-#Create reden.conf
+#Create reden datadir
 if [ ! -f ~/.redencore/reden.conf ]; then 
 	sudo mkdir ~/.redencore
 fi
 
 echo -e "${YELLOW}Creating reden.conf...${NC}"
-cat <<EOF > ~/.redencore/reden.conf
+
+# If genkey was not supplied in command line, we will generate private key on the fly
+if [ -z $genkey ]; then
+    cat <<EOF > ~/.redencore/reden.conf
 rpcuser=redenrpc
 rpcpassword=$rpcpassword
 EOF
 
-sudo chmod 755 -R ~/.redencore/reden.conf
+    sudo chmod 755 -R ~/.redencore/reden.conf
 
-#Starting daemon first time
-redend -daemon
-delay 30
+    #Starting daemon first time just to generate masternode private key
+    redend -daemon
+    delay 30
 
-#Generate masternode private key
-echo -e "${YELLOW}Generating masternode key...${NC}"
-genkey=$(reden-cli masternode genkey)
-reden-cli stop
-delay 60
+    #Generate masternode private key
+    echo -e "${YELLOW}Generating masternode private key...${NC}"
+    genkey=$(reden-cli masternode genkey)
+    if [ -z "$genkey" ]; then
+        echo -e "${RED}ERROR:${YELLOW}Can not generate masternode private key.$ \a"
+        echo -e "${RED}ERROR:${YELLOW}Reboot VPS and try again or supply existing genkey as a parameter."
+        exit 1
+    fi
+    
+    #Stopping daemon to create reden.conf
+    stop_daemon
+    delay 30
+fi
 
+# Create reden.conf
 cat <<EOF > ~/.redencore/reden.conf
 rpcuser=redenrpc
 rpcpassword=$rpcpassword
@@ -153,8 +192,9 @@ masternode=1
 masternodeprivkey=$genkey
 EOF
 
-#Starting daemon second time
+#Finally, starting reden daemon with new reden.conf
 redend
+delay 5
 
 #Setting auto star cron job for redend
 cronjob="@reboot sleep 30 && redend"
