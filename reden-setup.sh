@@ -135,7 +135,7 @@ cd ~
 stop_daemon
 
 # Deploy binaries to /usr/bin
-sudo cp RedenMasternodeSetup/Reden-v1.0-Ubuntu16.04/reden* /usr/bin/
+sudo cp RedenMasternodeSetup/reden-1.0.2-ubuntu16/reden* /usr/bin/
 sudo chmod 755 -R ~/RedenMasternodeSetup
 sudo chmod 755 /usr/bin/reden*
 
