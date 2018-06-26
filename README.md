@@ -29,7 +29,7 @@ To download (clone) the script and binaries to your VPS, use the following comma
 
 ```bash
 cd ~
-git clone https://github.com/fasterpool/RedenMasternodeSetup
+git clone https://github.com/RedenCore/RedenMasternodeSetup
 ```
 
 __NOTE:__ in case if you will need to re-download this setup script or binaries from github repo, use the following git command:
